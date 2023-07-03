@@ -37,6 +37,7 @@ def get_address_from_coords(apikey, coords):
     return address_str
 
 
+
 def fetch_coordinates(apikey: str, address: str) -> tuple[float, float] | None:
     base_url = "https://geocode-maps.yandex.ru/1.x"
     response = httpx.get(base_url, params={
