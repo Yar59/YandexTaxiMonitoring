@@ -13,6 +13,26 @@ logger = logging.getLogger(__name__)
 class States(Enum):
     start = auto()
     handle_menu = auto()
+    get_first_place = auto()
+    get_second_place = auto()
+    search_taxi = auto()
+
+
+def get_address_from_coords(apikey, coords):
+    payload = {
+        "apikey": apikey,
+        "format": "json",
+        "lang": "ru_RU",
+        "kind": "house",
+        "geocode": coords
+    }
+
+    response = httpx.get(url="https://geocode-maps.yandex.ru/1.x/", params=payload)
+    response.raise_for_status()
+    json_data = response.json()
+    address_str = json_data["response"]["GeoObjectCollection"]["featureMember"][0]["GeoObject"]["metaDataProperty"][
+        "GeocoderMetaData"]["AddressDetails"]["Country"]["AddressLine"]
+    return address_str
 
 
 def fetch_coordinates(apikey: str, address: str) -> tuple[float, float] | None:
@@ -51,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     reply_keyboard = [
         ["Выбрать маршрут", ],
     ]
-    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
 
     await update.message.reply_text(
         dedent("""
@@ -64,8 +84,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     return States.handle_menu
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def get_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    reply_keyboard = [
+        ['Отмена', ],
+    ]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text(
+        dedent("""
+                Пришли мне свою геопозицию или адрес места, откуда поедем.
+            """),
+        reply_markup=markup,
+    )
 
+    return States.get_first_place
+
+
+async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    reply_keyboard = [
+        ['Отмена', ],
+    ]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+    if update.message.text:
+        try:
+            context.user_data['first_place_name'] = update.message.text
+            context.user_data['first_place'] = fetch_coordinates(context.bot_data['GEOCODER_API_KEY'],
+                                                                 update.message.text)
+        except httpx.HTTPError:
+
+            await update.message.reply_text(
+                dedent("""
+                    Не смог найти такой адрес, попробуй еще раз.
+                    Пришли мне свою геопозицию или адрес места, откуда поедем.
+                """),
+                reply_markup=markup,
+            )
+            return States.get_first_place
+
+    else:
+        context.user_data['first_place'] = (update.message.location.longitude, update.message.location.latitude)
+        try:
+            context.user_data['first_place_name'] = get_address_from_coords(context.bot_data['GEOCODER_API_KEY'],
+                                                                            context.user_data['first_place'])
+        except httpx.HTTPError:
+            context.user_data['first_place_name'] = context.user_data['first_place']
+
+    await update.message.reply_text(
+        dedent(f"""
+            Отлично, будем искать машину от {context.user_data['first_place_name']}({context.user_data['first_place']}).
+            Пришли мне адрес места, куда поедем.
+        """),
+        reply_markup=markup,
+    )
+    return States.get_second_place
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Надеюсь, был тебе полезен, пока!",
         reply_markup=ReplyKeyboardRemove(),
@@ -95,10 +169,21 @@ def main():
     application.bot_data['TAXI_API_KEY'] = taxi_api_key
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[CommandHandler('start', start)],
         states={
+            States.handle_menu: [
+                MessageHandler(filters.Regex('^Выбрать маршрут'), get_info)
+            ],
+            States.get_first_place: [
+                MessageHandler(filters.Regex('^Отмена'), start),
+                MessageHandler(filters.TEXT, get_first_place),
+                MessageHandler(filters.LOCATION, get_first_place),
+            ],
         },
-        fallbacks=[MessageHandler(filters.Regex("^Done$"), cancel)],
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            MessageHandler(filters.Regex('^cancel'), cancel),
+        ],
     )
 
     application.add_handler(conv_handler)
