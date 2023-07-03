@@ -205,31 +205,23 @@ async def fetch_taxi_price(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search_taxi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
-    context.user_data['in_search'] = True
     context.user_data['search_start_time'] = datetime.now()
 
-    taxi_data = get_taxi(
-        context.bot_data['TAXI_CLIENT_ID'],
-        context.bot_data['TAXI_API_KEY'],
-        context.user_data['first_place'],
-        context.user_data['second_place'],
-    )
     reply_keyboard = [
         ['Отмена', ],
     ]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(
         dedent(f"""
-                    Поездка от {context.user_data['first_place_name']} {context.user_data['first_place']}
-                    до {context.user_data['second_place_name']} {context.user_data['second_place']}
-                    будет стоить {taxi_data['options'][0]['price_text']}
+                    Начинаю поиск!
                 """),
         reply_markup=markup,
     )
 
     context.job_queue.run_repeating(
         fetch_taxi_price,
-        interval=6,
+        interval=60,
+        first=1,
         user_id=update.message.from_user.id,
         chat_id=update.effective_chat.id,
     )
