@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from datetime import datetime
 from enum import Enum, auto
 from textwrap import dedent
 
@@ -131,12 +133,108 @@ async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await update.message.reply_text(
         dedent(f"""
-            Отлично, будем искать машину от {context.user_data['first_place_name']}({context.user_data['first_place']}).
-            Пришли мне адрес места, куда поедем.
+            Отлично, будем искать машину от {context.user_data['first_place_name']} {context.user_data['first_place']}.
+            Пришли мне геопозицию или адрес места, куда поедем.
         """),
         reply_markup=markup,
     )
     return States.get_second_place
+
+
+async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    reply_keyboard = [
+        ['Отмена', ],
+    ]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+    if update.message.text:
+        try:
+            context.user_data['second_place_name'] = update.message.text
+            context.user_data['second_place'] = fetch_coordinates(context.bot_data['GEOCODER_API_KEY'],
+                                                                 update.message.text)
+        except httpx.HTTPError:
+
+            await update.message.reply_text(
+                dedent("""
+                    Не смог найти такой адрес, попробуй еще раз.
+                    Пришли мне свою геопозицию или адрес места, откуда поедем.
+                """),
+                reply_markup=markup,
+            )
+            return States.get_second_place
+
+    else:
+        context.user_data['second_place'] = (update.message.location.longitude, update.message.location.latitude)
+        try:
+            context.user_data['second_place_name'] = get_address_from_coords(context.bot_data['GEOCODER_API_KEY'],
+                                                                            context.user_data['second_place'])
+        except httpx.HTTPError:
+            context.user_data['second_place_name'] = context.user_data['second_place']
+
+    reply_keyboard = [
+        ['Поиск', ],
+        ['Отмена', ],
+    ]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text(
+        dedent(f"""
+            Отлично, будем искать машину от {context.user_data['first_place_name']} {context.user_data['first_place']}
+            до {context.user_data['second_place_name']} {context.user_data['second_place']}
+            
+        """),
+        reply_markup=markup,
+    )
+    return States.search_taxi
+
+
+async def fetch_taxi_price(context: ContextTypes.DEFAULT_TYPE):
+    taxi_data = get_taxi(
+        context.bot_data['TAXI_CLIENT_ID'],
+        context.bot_data['TAXI_API_KEY'],
+        context.user_data['first_place'],
+        context.user_data['second_place'],
+    )
+    await context.bot.send_message(
+        text=dedent(f"""
+                Поездка от {context.user_data['first_place_name']} {context.user_data['first_place']}
+                до {context.user_data['second_place_name']} {context.user_data['second_place']}
+                будет стоить {taxi_data['options'][0]['price_text']}
+            """),
+        chat_id=context.job.chat_id,
+    )
+
+
+async def search_taxi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    context.user_data['in_search'] = True
+    context.user_data['search_start_time'] = datetime.now()
+
+    taxi_data = get_taxi(
+        context.bot_data['TAXI_CLIENT_ID'],
+        context.bot_data['TAXI_API_KEY'],
+        context.user_data['first_place'],
+        context.user_data['second_place'],
+    )
+    reply_keyboard = [
+        ['Отмена', ],
+    ]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text(
+        dedent(f"""
+                    Поездка от {context.user_data['first_place_name']} {context.user_data['first_place']}
+                    до {context.user_data['second_place_name']} {context.user_data['second_place']}
+                    будет стоить {taxi_data['options'][0]['price_text']}
+                """),
+        reply_markup=markup,
+    )
+
+    context.job_queue.run_repeating(
+        fetch_taxi_price,
+        interval=6,
+        user_id=update.message.from_user.id,
+        chat_id=update.effective_chat.id,
+    )
+
+    return States.search_taxi
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -178,6 +276,15 @@ def main():
                 MessageHandler(filters.Regex('^Отмена'), start),
                 MessageHandler(filters.TEXT, get_first_place),
                 MessageHandler(filters.LOCATION, get_first_place),
+            ],
+            States.get_second_place: [
+                MessageHandler(filters.Regex('^Отмена'), start),
+                MessageHandler(filters.TEXT, get_second_place),
+                MessageHandler(filters.LOCATION, get_second_place),
+            ],
+            States.search_taxi: [
+                MessageHandler(filters.Regex('^Отмена'), start),
+                MessageHandler(filters.Regex('^Поиск'), search_taxi),
             ],
         },
         fallbacks=[
