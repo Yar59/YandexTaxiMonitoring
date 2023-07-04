@@ -2,20 +2,21 @@ import httpx
 
 
 def get_address_from_coords(apikey, coords):
+    text_coords = ','.join([str(coord) for coord in coords])
     payload = {
         "apikey": apikey,
         "format": "json",
-        "lang": "ru_RU",
-        "kind": "house",
-        "geocode": coords
+        "geocode": text_coords,
     }
 
-    response = httpx.get(url="https://geocode-maps.yandex.ru/1.x/", params=payload)
+    response = httpx.get("https://geocode-maps.yandex.ru/1.x/", params=payload)
     response.raise_for_status()
-    json_data = response.json()
-    address_str = json_data["response"]["GeoObjectCollection"]["featureMember"][0]["GeoObject"]["metaDataProperty"][
-        "GeocoderMetaData"]["AddressDetails"]["Country"]["AddressLine"]
-    return address_str
+    try:
+        address_str = response.json()["response"]["GeoObjectCollection"]["featureMember"][0]["GeoObject"]["metaDataProperty"][
+            "GeocoderMetaData"]["AddressDetails"]["Country"]["AddressLine"]
+        return address_str
+    except IndexError:
+        return text_coords
 
 
 def fetch_coordinates(apikey: str, address: str) -> tuple[float, float] | None:

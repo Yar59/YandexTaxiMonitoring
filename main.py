@@ -67,9 +67,10 @@ async def get_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(
         dedent("""
-            Пришли мне свою геопозицию или адрес места, откуда поедем.
+            Пришли мне <b>геопозицию</b> или <b>адрес места</b>, куда поедем.
         """),
         reply_markup=markup,
+        parse_mode='HTML'
     )
 
     return States.get_first_place
@@ -89,14 +90,18 @@ async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if not context.user_data['first_place']:
                 raise httpx.HTTPError('Ошибка поиска места')
 
+            context.user_data['first_place_name'] = get_address_from_coords(context.bot_data['GEOCODER_API_KEY'],
+                                                                            context.user_data['first_place'])
+
         except httpx.HTTPError:
 
             await update.message.reply_text(
                 dedent("""
                     Не смог найти такой адрес, попробуй еще раз.
-                    Пришли мне свою геопозицию или адрес места, откуда поедем.
+                    Пришли мне <b>геопозицию</b> или <b>адрес места</b>, куда поедем.
                 """),
                 reply_markup=markup,
+                parse_mode='HTML',
             )
             return States.get_first_place
 
@@ -110,7 +115,9 @@ async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await update.message.reply_text(
         dedent(f"""
-            Отлично, будем искать машину от {context.user_data['first_place_name']} {context.user_data['first_place']}.
+            Отлично, будем искать машину 
+            От: ➡️ <b>{context.user_data['first_place_name']}</b> {context.user_data['first_place']} ⬅️
+            
             Пришли мне <b>геопозицию</b> или <b>адрес места</b>, куда поедем.
         """),
         reply_markup=markup,
@@ -130,8 +137,13 @@ async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             context.user_data['second_place_name'] = update.message.text
             context.user_data['second_place'] = fetch_coordinates(context.bot_data['GEOCODER_API_KEY'],
                                                                   update.message.text)
+
             if not context.user_data['second_place']:
                 raise httpx.HTTPError('Ошибка поиска места')
+
+            context.user_data['second_place_name'] = get_address_from_coords(context.bot_data['GEOCODER_API_KEY'],
+                                                                            context.user_data['second_place'])
+
         except httpx.HTTPError:
 
             await update.message.reply_text(
