@@ -86,6 +86,9 @@ async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data['first_place_name'] = update.message.text
             context.user_data['first_place'] = fetch_coordinates(context.bot_data['GEOCODER_API_KEY'],
                                                                  update.message.text)
+            if not context.user_data['first_place']:
+                raise httpx.HTTPError('Ошибка поиска места')
+
         except httpx.HTTPError:
 
             await update.message.reply_text(
@@ -108,9 +111,10 @@ async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(
         dedent(f"""
             Отлично, будем искать машину от {context.user_data['first_place_name']} {context.user_data['first_place']}.
-            Пришли мне геопозицию или адрес места, куда поедем.
+            Пришли мне <b>геопозицию</b> или <b>адрес места</b>, куда поедем.
         """),
         reply_markup=markup,
+        parse_mode='HTML',
     )
     return States.get_second_place
 
@@ -125,15 +129,18 @@ async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         try:
             context.user_data['second_place_name'] = update.message.text
             context.user_data['second_place'] = fetch_coordinates(context.bot_data['GEOCODER_API_KEY'],
-                                                                 update.message.text)
+                                                                  update.message.text)
+            if not context.user_data['second_place']:
+                raise httpx.HTTPError('Ошибка поиска места')
         except httpx.HTTPError:
 
             await update.message.reply_text(
                 dedent("""
                     Не смог найти такой адрес, попробуй еще раз.
-                    Пришли мне свою геопозицию или адрес места, откуда поедем.
+                    Пришли мне свою <b>геопозицию</b> или <b>адрес места</b>, откуда поедем.
                 """),
                 reply_markup=markup,
+                parse_mode='HTML'
             )
             return States.get_second_place
 
@@ -141,7 +148,7 @@ async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['second_place'] = (update.message.location.longitude, update.message.location.latitude)
         try:
             context.user_data['second_place_name'] = get_address_from_coords(context.bot_data['GEOCODER_API_KEY'],
-                                                                            context.user_data['second_place'])
+                                                                             context.user_data['second_place'])
         except httpx.HTTPError:
             context.user_data['second_place_name'] = context.user_data['second_place']
 
@@ -154,11 +161,12 @@ async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         dedent(f"""
             Отлично, будем искать машину!
             
-            от {context.user_data['first_place_name']} {context.user_data['first_place']}
-        
-            до {context.user_data['second_place_name']} {context.user_data['second_place']}
+            От: ➡️ <b>{context.user_data['first_place_name']}</b> {context.user_data['first_place']} ⬅️
+            
+            До: ➡️ <b>{context.user_data['second_place_name']}</b> {context.user_data['second_place']} ⬅️
         """),
         reply_markup=markup,
+        parse_mode='HTML'
     )
     return States.search_taxi
 
@@ -179,7 +187,7 @@ async def fetch_taxi_price(context: ContextTypes.DEFAULT_TYPE):
         context.user_data['best_price'] = taxi_data['options'][0]['price']
         context.user_data['last_message_price'] = taxi_data['options'][0]['price']
 
-    if taxi_data['options'][0]['price'] <= context.user_data['last_message_price']*0.95:
+    if taxi_data['options'][0]['price'] <= context.user_data['last_message_price'] * 0.95:
         additional_text = '‼️Цена на такси снизилась‼️'
 
     if context.user_data['best_price'] > taxi_data['options'][0]['price']:
@@ -195,11 +203,11 @@ async def fetch_taxi_price(context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton('Заказать', url=order_url), ],
     ]
-    markup = InlineKeyboardMarkup(inline_keyboard=keyboard,)
+    markup = InlineKeyboardMarkup(inline_keyboard=keyboard, )
 
-    if context.user_data.get('last_message', datetime.now()-timedelta(minutes=4))+timedelta(minutes=3) < datetime.now() \
-    or additional_text:
-
+    if context.user_data.get('last_message', datetime.now() - timedelta(minutes=4)) + timedelta(
+            minutes=3) < datetime.now() \
+            or additional_text:
         context.user_data['last_message_price'] = taxi_data['options'][0]['price']
         context.user_data['last_message'] = datetime.now()
         await context.bot.send_message(
@@ -207,22 +215,24 @@ async def fetch_taxi_price(context: ContextTypes.DEFAULT_TYPE):
                 {additional_text}
                 
                 Поездка 
-                От: ➡️ **{context.user_data['first_place_name']}** {context.user_data['first_place']} ⬅️
-                До: ➡️ **{context.user_data['second_place_name']}** {context.user_data['second_place']} ⬅️
+                От: ➡️ <b>{context.user_data['first_place_name']}</b> {context.user_data['first_place']} ⬅️
+                До: ➡️ <b>{context.user_data['second_place_name']}</b> {context.user_data['second_place']} ⬅️
                 
-                Сейчас поездка стоит: {taxi_data['options'][0]['price_text']}
+                Сейчас поездка стоит: <b>{taxi_data['options'][0]['price_text']}</b>
                 
-                Минимальная цена за время поиска: **{context.user_data['best_price']}** руб.
+                Минимальная цена за время поиска: <b>{context.user_data['best_price']}</b> руб.
                 
                 Минимальная цена по этому маршруту
-                (__без учета повышающего коэффициента__): **{taxi_data['options'][0]['min_price']}** руб.
+                (<i>без учета повышающего коэффициента</i>): <b>{taxi_data['options'][0]['min_price']}</b> руб.
                 
+                Поездка займет: {taxi_data['time_text']}
                 
                 ⬇️ Для заказа нажмите кнопку ниже ⬇️
             """),
             chat_id=context.job.chat_id,
             reply_markup=markup,
-            parse_mode='Markdown',
+            parse_mode='HTML',
+            disable_notification=not bool(len(additional_text)),
         )
 
 
@@ -235,7 +245,7 @@ async def search_taxi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Sta
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(
         dedent(f"""
-                    Начинаю поиск!
+            Начинаю поиск!
         """),
         reply_markup=markup,
     )
