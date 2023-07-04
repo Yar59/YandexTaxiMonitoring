@@ -1,7 +1,7 @@
 import httpx
 
 
-def get_address_from_coords(apikey, coords):
+def get_address_from_coords(apikey: str, coords: tuple[float, float]) -> str:
     text_coords = ','.join([str(coord) for coord in coords])
     payload = {
         "apikey": apikey,

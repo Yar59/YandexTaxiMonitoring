@@ -67,7 +67,7 @@ async def get_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(
         dedent("""
-            Пришли мне <b>геопозицию</b> или <b>адрес места</b>, куда поедем.
+            Пришли мне <b>геопозицию</b> или <b>адрес места</b>, откуда поедем.
         """),
         reply_markup=markup,
         parse_mode='HTML'
@@ -98,7 +98,7 @@ async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text(
                 dedent("""
                     Не смог найти такой адрес, попробуй еще раз.
-                    Пришли мне <b>геопозицию</b> или <b>адрес места</b>, куда поедем.
+                    Пришли мне <b>геопозицию</b> или <b>адрес места</b>, откуда поедем.
                 """),
                 reply_markup=markup,
                 parse_mode='HTML',
@@ -116,7 +116,7 @@ async def get_first_place(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(
         dedent(f"""
             Отлично, будем искать машину 
-            От: ➡️ <b>{context.user_data['first_place_name']}</b> {context.user_data['first_place']} ⬅️
+            От: ➡️ <b>{context.user_data['first_place_name']}</b> ⬅️
             
             Пришли мне <b>геопозицию</b> или <b>адрес места</b>, куда поедем.
         """),
@@ -173,9 +173,9 @@ async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         dedent(f"""
             Отлично, будем искать машину!
             
-            От: ➡️ <b>{context.user_data['first_place_name']}</b> {context.user_data['first_place']} ⬅️
+            От: ➡️ <b>{context.user_data['first_place_name']}</b> ⬅️
             
-            До: ➡️ <b>{context.user_data['second_place_name']}</b> {context.user_data['second_place']} ⬅️
+            До: ➡️ <b>{context.user_data['second_place_name']}</b> ⬅️
         """),
         reply_markup=markup,
         parse_mode='HTML'
@@ -227,8 +227,8 @@ async def fetch_taxi_price(context: ContextTypes.DEFAULT_TYPE):
                 {additional_text}
                 
                 Поездка 
-                От: ➡️ <b>{context.user_data['first_place_name']}</b> {context.user_data['first_place']} ⬅️
-                До: ➡️ <b>{context.user_data['second_place_name']}</b> {context.user_data['second_place']} ⬅️
+                От: ➡️ <b>{context.user_data['first_place_name']}</b> ⬅️
+                До: ➡️ <b>{context.user_data['second_place_name']}</b> ⬅️
                 
                 Сейчас поездка стоит: <b>{taxi_data['options'][0]['price_text']}</b>
                 
