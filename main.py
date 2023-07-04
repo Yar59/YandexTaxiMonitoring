@@ -1,13 +1,23 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum, auto
 from textwrap import dedent
 
 import httpx
 from environs import Env
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Application, ConversationHandler, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import (
+    Application,
+    ConversationHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+
+)
+
+from yandex_api import fetch_coordinates, get_address_from_coords, get_taxi
 
 logger = logging.getLogger(__name__)
 
@@ -20,57 +30,20 @@ class States(Enum):
     search_taxi = auto()
 
 
-def get_address_from_coords(apikey, coords):
-    payload = {
-        "apikey": apikey,
-        "format": "json",
-        "lang": "ru_RU",
-        "kind": "house",
-        "geocode": coords
-    }
-
-    response = httpx.get(url="https://geocode-maps.yandex.ru/1.x/", params=payload)
-    response.raise_for_status()
-    json_data = response.json()
-    address_str = json_data["response"]["GeoObjectCollection"]["featureMember"][0]["GeoObject"]["metaDataProperty"][
-        "GeocoderMetaData"]["AddressDetails"]["Country"]["AddressLine"]
-    return address_str
-
-
-
-def fetch_coordinates(apikey: str, address: str) -> tuple[float, float] | None:
-    base_url = "https://geocode-maps.yandex.ru/1.x"
-    response = httpx.get(base_url, params={
-        "geocode": address,
-        "apikey": apikey,
-        "format": "json",
-    })
-    response.raise_for_status()
-    found_places = response.json()["response"]["GeoObjectCollection"]["featureMember"]
-
-    if not found_places:
-        return None
-
-    most_relevant = found_places[0]
-    lon, lat = most_relevant["GeoObject"]["Point"]["pos"].split(" ")
-    return lon, lat
-
-
-def get_taxi(client_id: str | int, api_key: str, start_coordinates: tuple[float, float],
-             end_coordinates: tuple[float, float]) -> dict:
-    url = 'https://taxi-routeinfo.taxi.yandex.net/taxi_info'
-    payload = {
-        'clid': client_id,
-        'apikey': api_key,
-        'rll': f'{start_coordinates[0]},{start_coordinates[1]}~{end_coordinates[0]},{end_coordinates[1]}',
-        'class': 'econom, business'
-    }
-    response = httpx.get(url, params=payload)
-    response.raise_for_status()
-    return response.json()
+def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Remove job with given name. Returns whether job was removed."""
+    current_jobs = context.job_queue.get_jobs_by_name(name)
+    if not current_jobs:
+        return False
+    for job in current_jobs:
+        job.schedule_removal()
+    return True
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    remove_job_if_exists(str(update.effective_chat.id), context)
+    context.user_data['start_price'] = 0
+
     reply_keyboard = [
         ["Выбрать маршрут", ],
     ]
@@ -94,8 +67,8 @@ async def get_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(
         dedent("""
-                Пришли мне свою геопозицию или адрес места, откуда поедем.
-            """),
+            Пришли мне свою геопозицию или адрес места, откуда поедем.
+        """),
         reply_markup=markup,
     )
 
@@ -179,9 +152,11 @@ async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(
         dedent(f"""
-            Отлично, будем искать машину от {context.user_data['first_place_name']} {context.user_data['first_place']}
-            до {context.user_data['second_place_name']} {context.user_data['second_place']}
+            Отлично, будем искать машину!
             
+            от {context.user_data['first_place_name']} {context.user_data['first_place']}
+        
+            до {context.user_data['second_place_name']} {context.user_data['second_place']}
         """),
         reply_markup=markup,
     )
@@ -189,20 +164,66 @@ async def get_second_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def fetch_taxi_price(context: ContextTypes.DEFAULT_TYPE):
+    additional_text = ''
+
     taxi_data = get_taxi(
         context.bot_data['TAXI_CLIENT_ID'],
         context.bot_data['TAXI_API_KEY'],
         context.user_data['first_place'],
         context.user_data['second_place'],
     )
-    await context.bot.send_message(
-        text=dedent(f"""
-                Поездка от {context.user_data['first_place_name']} {context.user_data['first_place']}
-                до {context.user_data['second_place_name']} {context.user_data['second_place']}
-                будет стоить {taxi_data['options'][0]['price_text']}
+    class_level = taxi_data['options'][0]['class_level']
+
+    if not context.user_data['start_price']:
+        context.user_data['start_price'] = taxi_data['options'][0]['price']
+        context.user_data['best_price'] = taxi_data['options'][0]['price']
+        context.user_data['last_message_price'] = taxi_data['options'][0]['price']
+
+    if taxi_data['options'][0]['price'] <= context.user_data['last_message_price']*0.95:
+        additional_text = '‼️Цена на такси снизилась‼️'
+
+    if context.user_data['best_price'] > taxi_data['options'][0]['price']:
+        context.user_data['best_price'] = taxi_data['options'][0]['price']
+
+    order_url = f'https://3.redirect.appmetrica.yandex.com/route' \
+                f'?start-lat={context.user_data["first_place"][1]}' \
+                f'&start-lon={context.user_data["first_place"][0]}' \
+                f'&end-lat={context.user_data["second_place"][1]}' \
+                f'&end-lon={context.user_data["second_place"][0]}' \
+                f'&level={class_level}' \
+                f'&appmetrica_tracking_id=1178268795219780156'
+    keyboard = [
+        [InlineKeyboardButton('Заказать', url=order_url), ],
+    ]
+    markup = InlineKeyboardMarkup(inline_keyboard=keyboard,)
+
+    if context.user_data.get('last_message', datetime.now()-timedelta(minutes=4))+timedelta(minutes=3) < datetime.now() \
+    or additional_text:
+
+        context.user_data['last_message_price'] = taxi_data['options'][0]['price']
+        context.user_data['last_message'] = datetime.now()
+        await context.bot.send_message(
+            text=dedent(f"""
+                {additional_text}
+                
+                Поездка 
+                От: ➡️ **{context.user_data['first_place_name']}** {context.user_data['first_place']} ⬅️
+                До: ➡️ **{context.user_data['second_place_name']}** {context.user_data['second_place']} ⬅️
+                
+                Сейчас поездка стоит: {taxi_data['options'][0]['price_text']}
+                
+                Минимальная цена за время поиска: **{context.user_data['best_price']}** руб.
+                
+                Минимальная цена по этому маршруту
+                (__без учета повышающего коэффициента__): **{taxi_data['options'][0]['min_price']}** руб.
+                
+                
+                ⬇️ Для заказа нажмите кнопку ниже ⬇️
             """),
-        chat_id=context.job.chat_id,
-    )
+            chat_id=context.job.chat_id,
+            reply_markup=markup,
+            parse_mode='Markdown',
+        )
 
 
 async def search_taxi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
@@ -215,16 +236,17 @@ async def search_taxi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Sta
     await update.message.reply_text(
         dedent(f"""
                     Начинаю поиск!
-                """),
+        """),
         reply_markup=markup,
     )
 
     context.job_queue.run_repeating(
         fetch_taxi_price,
-        interval=60,
+        interval=31,
         first=1,
         user_id=update.message.from_user.id,
         chat_id=update.effective_chat.id,
+        name=str(update.effective_chat.id),
     )
 
     return States.search_taxi
